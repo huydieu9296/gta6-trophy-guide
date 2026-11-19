@@ -1,5 +1,1 @@
-[
-  { "file": "1-checklist.jpg", "path": "/", "viewport": { "width": 1280, "height": 800 } },
-  { "file": "2-silver.jpg", "path": "/", "grade": "silver", "viewport": { "width": 1280, "height": 800 } },
-  { "file": "3-bronze.jpg", "path": "/", "grade": "bronze", "scroll": 1400, "viewport": { "width": 1280, "height": 800 } }
-]
+[{"file":"1-checklist.jpg","path":"/","seedEarned":13,"select":2,"spoiler":true,"tab":"checklist","viewport":{"height":800,"width":1280}},{"file":"2-roadmap.jpg","path":"/","seedEarned":13,"tab":"roadmap","viewport":{"height":800,"width":1280}},{"file":"3-missable.jpg","path":"/","seedEarned":13,"tab":"missables","viewport":{"height":800,"width":1280}},{"file":"4-spoiler.jpg","kind":"story","path":"/","seedIds":[1,14,15,16,17,18,19,20,21,22,23,24,25],"spoiler":true,"tab":"checklist","viewport":{"height":800,"width":1280}}]
