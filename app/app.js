@@ -1,169 +1,120 @@
-// Leonida Platinum — bootstrap: loads the trophy list and the roadmap, then wires
-// the tabs, the toolbar, the checklist and the detail pane together.
-// Everything runs offline: the only fetches are the app's own data files.
-import { loadEarned, saveEarned, cleanEarned, earnedCounts, totalCounts, exportProgress, importProgress } from './tracker.js';
-import { KIND_LABELS, applyFilters } from './filters.js';
-import { renderTrophyList, renderDetail } from './render.js';
+// app.js — boot and wiring for Leonida Platinum. Loads the trophy data and the
+// roadmap, draws every view, and wires the toolbar (search, kind filters,
+// spoiler toggle, export and import) and the tabs. No network request is made
+// except fetching this app's own data files.
+
+import { renderChecklist, renderDetail, renderProgress, selectTrophy } from './render.js';
 import { renderRoadmap, renderMissables } from './roadmap.js';
-
-const listEl = document.getElementById('trophy-list');
-const detailEl = document.getElementById('detail');
-const emptyNote = document.getElementById('empty-note');
-const filterLine = document.getElementById('filter-line');
-const searchInput = document.getElementById('search');
-const gradeSelect = document.getElementById('grade');
-const hideEarnedBox = document.getElementById('hide-earned');
-const spoilerBox = document.getElementById('spoiler');
-const kindFiltersEl = document.getElementById('kind-filters');
-
-const trophiesDoc = await (await fetch('data/trophies.json')).json();
-const roadmapDoc = await (await fetch('data/roadmap.json')).json();
-const trophies = trophiesDoc.trophies;
-const totals = totalCounts(trophies);
-
-let earned = cleanEarned(loadEarned(), trophies);
-saveEarned(earned);
+import { exportProgress, importProgress } from './tracker.js';
 
 const state = {
   kind: 'all',
-  grade: 'all',
   query: '',
-  hideEarned: false,
-  spoilersOn: spoilerBox.checked,
-  selectedId: null,
+  spoilersOn: false,
+  selectTrophy(id) {
+    selectTrophy(id, trophies, state);
+  },
 };
 
-function renderProgress() {
-  const counts = earnedCounts(earned, trophies);
-  const pct = Math.round((counts.total / totals.total) * 100);
-  document.getElementById('progress-count').textContent = `${counts.total} of ${totals.total} earned`;
-  document.getElementById('progress-pct').textContent = `${pct}%`;
-  const fill = document.getElementById('progress-fill');
-  fill.style.width = `${pct}%`;
-  document.getElementById('progress-bar').setAttribute('aria-valuenow', String(counts.total));
-  document.getElementById('progress-grades').textContent =
-    `Platinum ${counts.platinum}/${totals.platinum} · Gold ${counts.gold}/${totals.gold} · ` +
-    `Silver ${counts.silver}/${totals.silver} · Bronze ${counts.bronze}/${totals.bronze}`;
+let trophies = [];
+let roadmap = null;
+
+async function loadData() {
+  const [trophyRes, roadmapRes] = await Promise.all([
+    fetch('./data/trophies.json'),
+    fetch('./data/roadmap.json'),
+  ]);
+  if (!trophyRes.ok) throw new Error('Could not load app/data/trophies.json');
+  if (!roadmapRes.ok) throw new Error('Could not load app/data/roadmap.json');
+  const trophyData = await trophyRes.json();
+  trophies = trophyData.trophies || trophyData;
+  roadmap = await roadmapRes.json();
 }
 
-function renderAll() {
-  renderProgress();
-  const shown = applyFilters(trophies, {
-    kind: state.kind,
-    grade: state.grade,
-    query: state.query,
-    hideEarned: state.hideEarned,
-    earned,
-  });
-  emptyNote.hidden = shown.length > 0;
-  filterLine.textContent = shown.length === trophies.length
-    ? `Showing all ${trophies.length} trophies.`
-    : `Showing ${shown.length} of ${trophies.length} trophies.`;
-  const selected = trophies.find((t) => t.id === state.selectedId) ?? null;
-  renderTrophyList(listEl, shown, {
-    earned,
-    spoilersOn: state.spoilersOn,
-    selectedId: state.selectedId,
-    onToggle: (trophy, checked) => {
-      if (checked) earned.add(trophy.name);
-      else earned.delete(trophy.name);
-      saveEarned(earned);
-      renderAll();
-      renderRoadmap(document.getElementById('roadmap-root'), roadmapDoc, trophies, earned);
-    },
-    onSelect: (trophy) => {
-      state.selectedId = trophy.id;
-      renderDetail(detailEl, trophy, { earned, spoilersOn: state.spoilersOn });
-      renderAll();
-    },
-  });
-  renderDetail(detailEl, selected, { earned, spoilersOn: state.spoilersOn });
+function drawAll() {
+  renderChecklist(trophies, state);
+  renderDetail(trophies, state);
+  renderProgress(trophies);
+  renderRoadmap(roadmap, trophies);
+  renderMissables(trophies, state);
 }
 
-function buildKindFilters() {
-  kindFiltersEl.replaceChildren();
-  for (const kind of ['all', 'story', 'missable', 'collectibles', 'activities', 'online', 'platinum']) {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'chip';
-    button.dataset.kind = kind;
-    button.textContent = KIND_LABELS[kind];
-    if (kind === state.kind) button.classList.add('is-active');
-    button.addEventListener('click', () => {
-      state.kind = kind;
-      kindFiltersEl.querySelectorAll('.chip').forEach((c) => c.classList.toggle('is-active', c.dataset.kind === kind));
-      renderAll();
-    });
-    kindFiltersEl.append(button);
-  }
-}
-
-function buildTabs() {
+function wireTabs() {
   document.querySelectorAll('.tab').forEach((tab) => {
-    tab.addEventListener('click', () => {
-      document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('is-active', t === tab));
-      document.querySelectorAll('.panel').forEach((p) => p.classList.toggle('is-active', p.id === `panel-${tab.dataset.tab}`));
+    tab.addEventListener('click', () => openView(tab.dataset.view));
+  });
+  // Deep links: index.html#roadmap and index.html#missables open that view.
+  const hash = (location.hash || '').replace('#', '');
+  if (hash === 'roadmap' || hash === 'missables') openView(hash);
+}
+
+function openView(view) {
+  document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.view === view));
+  document.querySelectorAll('.view').forEach((v) => v.classList.remove('active'));
+  document.getElementById(`view${capitalize(view)}`).classList.add('active');
+  if (view === 'roadmap') renderRoadmap(roadmap, trophies);
+  if (view === 'missables') renderMissables(trophies, state);
+}
+
+function capitalize(word) {
+  return word.charAt(0).toUpperCase() + word.slice(1);
+}
+
+function wireToolbar() {
+  document.getElementById('searchBox').addEventListener('input', (event) => {
+    state.query = event.target.value;
+    renderChecklist(trophies, state);
+  });
+
+  document.querySelectorAll('#kindFilters .filter').forEach((button) => {
+    button.addEventListener('click', () => {
+      document.querySelectorAll('#kindFilters .filter').forEach((b) => b.classList.remove('active'));
+      button.classList.add('active');
+      state.kind = button.dataset.kind;
+      renderChecklist(trophies, state);
     });
+  });
+
+  document.getElementById('spoilerToggle').addEventListener('change', (event) => {
+    state.spoilersOn = event.target.checked;
+    document.getElementById('spoilerNote').hidden = !state.spoilersOn;
+    renderChecklist(trophies, state);
+    renderDetail(trophies, state);
+  });
+
+  document.getElementById('exportBtn').addEventListener('click', () => {
+    const count = exportProgress();
+    document.getElementById('exportBtn').textContent = `Exported ${count} earned`;
+    setTimeout(() => {
+      document.getElementById('exportBtn').textContent = 'Export progress';
+    }, 2500);
+  });
+
+  const importFile = document.getElementById('importFile');
+  document.getElementById('importBtn').addEventListener('click', () => importFile.click());
+  importFile.addEventListener('change', async () => {
+    const file = importFile.files[0];
+    if (!file) return;
+    try {
+      const count = await importProgress(file);
+      document.getElementById('importBtn').textContent = `Imported ${count} earned`;
+      drawAll();
+    } catch (err) {
+      document.getElementById('importBtn').textContent = 'Import failed — bad file';
+    }
+    setTimeout(() => {
+      document.getElementById('importBtn').textContent = 'Import progress';
+    }, 3000);
+    importFile.value = '';
   });
 }
 
-searchInput.addEventListener('input', () => {
-  state.query = searchInput.value.trim();
-  renderAll();
-});
-gradeSelect.addEventListener('change', () => {
-  state.grade = gradeSelect.value;
-  renderAll();
-});
-hideEarnedBox.addEventListener('change', () => {
-  state.hideEarned = hideEarnedBox.checked;
-  renderAll();
-});
-spoilerBox.addEventListener('change', () => {
-  state.spoilersOn = spoilerBox.checked;
-  renderAll();
-});
-document.getElementById('export').addEventListener('click', () => {
-  const count = exportProgress(earned);
-  filterLine.textContent = `Exported ${count} earned trophies to leonida-platinum-progress.json.`;
-});
-document.getElementById('import').addEventListener('change', async (event) => {
-  const file = event.target.files[0];
-  if (!file) return;
-  try {
-    earned = await importProgress(file, trophies);
-    saveEarned(earned);
-    renderAll();
-    renderRoadmap(document.getElementById('roadmap-root'), roadmapDoc, trophies, earned);
-    filterLine.textContent = `Imported progress from ${file.name}: ${earned.size} trophies earned.`;
-  } catch (error) {
-    filterLine.textContent = `Could not import ${file.name}: ${error.message}`;
-  }
-  event.target.value = '';
-});
-document.getElementById('reset').addEventListener('click', () => {
-  if (!window.confirm('Clear all earned trophies in this browser?')) return;
-  earned = new Set();
-  saveEarned(earned);
-  renderAll();
-  renderRoadmap(document.getElementById('roadmap-root'), roadmapDoc, trophies, earned);
-});
-
-// About tab: the entry's own sources, from the trophy file's source list.
-const aboutSources = document.getElementById('about-sources');
-for (const source of trophiesDoc.sources ?? []) {
-  const item = document.createElement('li');
-  const link = document.createElement('a');
-  link.href = source.url;
-  link.target = '_blank';
-  link.rel = 'noopener noreferrer';
-  link.textContent = source.name;
-  item.append(link);
-  aboutSources.append(item);
+try {
+  await loadData();
+  wireTabs();
+  wireToolbar();
+  drawAll();
+} catch (err) {
+  document.getElementById('trophyList').innerHTML =
+    `<li class="empty-note">The guide could not load its data files: ${err.message}</li>`;
 }
-
-buildKindFilters();
-buildTabs();
-renderRoadmap(document.getElementById('roadmap-root'), roadmapDoc, trophies, earned);
-renderMissables(document.getElementById('missables-root'), roadmapDoc, trophies);
-renderAll();

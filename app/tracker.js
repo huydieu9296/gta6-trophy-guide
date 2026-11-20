@@ -1,70 +1,84 @@
-// Tracker state: which trophies are earned, saved in localStorage, with export/import.
-// The storage key is versioned so a future format change never corrupts an old save.
-export const STORAGE_KEY = 'leonida-platinum-v1';
+// tracker.js — saved progress: localStorage, export to a file, import back.
+// One job only: own the earned set and persist it. Nothing here touches the DOM
+// except the file download it creates for an export.
 
-export function loadEarned() {
+const STORAGE_KEY = 'leonida-platinum-progress-v1';
+
+// The earned set: trophy ids (numbers) the player has ticked.
+let earned = new Set(loadFromStorage());
+
+function loadFromStorage() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return new Set();
+    if (!raw) return [];
     const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return new Set();
-    return new Set(parsed.filter((name) => typeof name === 'string'));
-  } catch {
-    return new Set();
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((id) => Number.isInteger(id));
+  } catch (_err) {
+    return [];
   }
 }
 
-export function saveEarned(earned) {
+function saveToStorage() {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify([...earned].sort()));
-  } catch {
-    // Storage may be full or unavailable (private mode): progress still works in memory.
+    localStorage.setItem(STORAGE_KEY, JSON.stringify([...earned].sort((a, b) => a - b)));
+  } catch (_err) {
+    // Storage full or unavailable (private mode): progress still lives in memory.
   }
 }
 
-// Keep only names that exist in the trophy list; drop anything else (e.g. a typo'd file).
-export function cleanEarned(earned, trophies) {
-  const known = new Set(trophies.map((t) => t.name));
-  return new Set([...earned].filter((name) => known.has(name)));
+export function isEarned(id) {
+  return earned.has(id);
 }
 
-export function earnedCounts(earned, trophies) {
-  const counts = { platinum: 0, gold: 0, silver: 0, bronze: 0, total: 0 };
-  for (const t of trophies) {
-    if (earned.has(t.name)) {
-      counts[t.grade] += 1;
-      counts.total += 1;
-    }
-  }
-  return counts;
+export function earnedCount() {
+  return earned.size;
 }
 
-export function totalCounts(trophies) {
-  const counts = { platinum: 0, gold: 0, silver: 0, bronze: 0, total: trophies.length };
-  for (const t of trophies) counts[t.grade] += 1;
-  return counts;
+export function earnedIds() {
+  return [...earned].sort((a, b) => a - b);
 }
 
-export function exportProgress(earned) {
+export function setEarned(id, value) {
+  if (value) earned.add(id);
+  else earned.delete(id);
+  saveToStorage();
+}
+
+export function toggleEarned(id) {
+  setEarned(id, !earned.has(id));
+  return earned.has(id);
+}
+
+// Export: download a JSON file the player can keep or move to another browser.
+export function exportProgress() {
   const payload = {
-    app: 'Leonida Platinum — GTA VI trophy tracker',
+    app: 'Leonida Platinum',
+    version: 1,
     exportedAt: new Date().toISOString(),
-    earned: [...earned].sort(),
+    earned: earnedIds(),
   };
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   anchor.href = url;
   anchor.download = 'leonida-platinum-progress.json';
+  document.body.appendChild(anchor);
   anchor.click();
+  anchor.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
   return payload.earned.length;
 }
 
-export async function importProgress(file, trophies) {
+// Import: read a file exported by exportProgress (or written by hand in the
+// same shape) and replace the earned set with it. Returns how many ids it took.
+export async function importProgress(file) {
   const text = await file.text();
   const parsed = JSON.parse(text);
-  const names = Array.isArray(parsed) ? parsed : parsed.earned;
-  if (!Array.isArray(names)) throw new Error('That file has no earned list in it.');
-  return cleanEarned(new Set(names), trophies);
+  const ids = Array.isArray(parsed) ? parsed : parsed.earned;
+  if (!Array.isArray(ids)) throw new Error('That file does not hold a progress list.');
+  const clean = ids.filter((id) => Number.isInteger(id) && id >= 1 && id <= 55);
+  earned = new Set(clean);
+  saveToStorage();
+  return clean.length;
 }
